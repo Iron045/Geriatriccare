@@ -1,0 +1,231 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsUser(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function myPhone() {
+      return request.auth.token.phone_number;
+    }
+
+    function isLinkedChild(elderId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/care_relationships/$(elderId + '_' + request.auth.uid));
+    }
+
+    function hasRole(userId, role) {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(userId)).data.role == role;
+    }
+
+    match /users/{userId} {
+      allow create: if ownsUser(userId)
+        && request.resource.data.role in ['elder', 'child']
+        && request.resource.data.gender in ['male', 'female', 'other']
+        && request.resource.data.phoneNumber == request.auth.token.phone_number;
+      allow read: if ownsUser(userId) || isLinkedChild(userId);
+      allow update: if ownsUser(userId)
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.phoneNumber == resource.data.phoneNumber
+        && request.resource.data.phoneNumber == request.auth.token.phone_number;
+      allow delete: if false;
+    }
+
+    match /user_directory/{phoneNumber} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.phoneNumber == phoneNumber
+        && request.resource.data.phoneNumber == request.auth.token.phone_number
+        && request.resource.data.role in ['elder', 'child']
+        && request.resource.data.role
+          == getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      allow delete: if false;
+    }
+
+    match /fcm_tokens/{tokenId} {
+      allow create, update: if signedIn()
+        && hasRole(request.auth.uid, 'child')
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.token is string
+        && request.resource.data.platform in ['android', 'ios', 'web'];
+      allow read, delete: if signedIn()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    match /health_records/{recordId} {
+      allow create: if signedIn()
+        && request.resource.data.elderUserId == request.auth.uid
+        && request.resource.data.systolicBp is int
+        && request.resource.data.diastolicBp is int
+        && request.resource.data.systolicBp >= 70
+        && request.resource.data.systolicBp <= 250
+        && request.resource.data.diastolicBp >= 40
+        && request.resource.data.diastolicBp <= 150
+        && request.resource.data.systolicBp > request.resource.data.diastolicBp;
+      allow read: if signedIn() && (
+        resource.data.elderUserId == request.auth.uid
+        || isLinkedChild(resource.data.elderUserId)
+      );
+      allow update: if signedIn()
+        && isLinkedChild(resource.data.elderUserId)
+        && (
+          !resource.data.keys().hasAny(['contactedAt'])
+          || resource.data.contactedAt == null
+        )
+        && request.resource.data.contactedAt is timestamp
+        && request.resource.data.contactedById == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['contactedAt', 'contactedById']);
+      allow delete: if false;
+    }
+
+    match /medication_schedules/{scheduleId} {
+      allow create: if signedIn()
+        && (
+          request.resource.data.elderUserId == request.auth.uid
+          || isLinkedChild(request.resource.data.elderUserId)
+        );
+      allow read: if signedIn() && (
+        resource.data.elderUserId == request.auth.uid
+        || isLinkedChild(resource.data.elderUserId)
+      );
+      allow update: if signedIn()
+        && resource.data.elderUserId == request.auth.uid
+        && request.resource.data.elderUserId == resource.data.elderUserId;
+      allow delete: if false;
+    }
+
+    match /medication_intakes/{intakeId} {
+      allow create: if signedIn()
+        && request.resource.data.elderUserId == request.auth.uid;
+      allow read: if signedIn() && (
+        resource.data.elderUserId == request.auth.uid
+        || isLinkedChild(resource.data.elderUserId)
+      );
+      allow update: if signedIn()
+        && resource.data.elderUserId == request.auth.uid
+        && request.resource.data.elderUserId == resource.data.elderUserId;
+      allow delete: if false;
+    }
+
+    match /account_links/{linkId} {
+      allow create: if signedIn()
+        && request.resource.data.elderId == request.auth.uid
+        && hasRole(request.auth.uid, 'elder')
+        && request.resource.data.childPhone is string
+        && request.resource.data.childPhone != myPhone()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.childId is string
+        && get(/databases/$(database)/documents/user_directory/$(request.resource.data.childPhone)).data.uid
+          == request.resource.data.childId
+        && get(/databases/$(database)/documents/user_directory/$(request.resource.data.childPhone)).data.role
+          == 'child';
+
+      allow read: if signedIn() && (
+        resource.data.elderId == request.auth.uid
+        || resource.data.childId == request.auth.uid
+        || resource.data.childPhone == myPhone()
+      );
+
+      allow update: if signedIn() && (
+        (
+          resource.data.elderId == request.auth.uid
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'updatedAt'])
+        )
+        ||
+        (
+          resource.data.childPhone == myPhone()
+          && hasRole(request.auth.uid, 'child')
+          && (resource.data.childId == null || resource.data.childId == request.auth.uid)
+          && resource.data.status == 'pending'
+          && request.resource.data.status in ['accepted', 'rejected']
+          && request.resource.data.childId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'childId', 'childName', 'updatedAt'])
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /care_relationships/{relationshipId} {
+      allow create: if signedIn()
+        && request.resource.data.childId == request.auth.uid
+        && request.resource.data.status == 'accepted'
+        && relationshipId == request.resource.data.elderId + '_' + request.auth.uid
+        && get(/databases/$(database)/documents/account_links/$(request.resource.data.invitationId)).data.elderId
+          == request.resource.data.elderId
+        && get(/databases/$(database)/documents/account_links/$(request.resource.data.invitationId)).data.childPhone
+          == myPhone();
+      allow read: if signedIn() && (
+        resource.data.elderId == request.auth.uid
+        || resource.data.childId == request.auth.uid
+      );
+      allow update, delete: if false;
+    }
+
+    match /sos_alerts/{alertId} {
+      allow create: if signedIn()
+        && hasRole(request.auth.uid, 'elder')
+        && request.resource.data.elderUserId == request.auth.uid
+        && request.resource.data.triggerMethod in ['button', 'shake']
+        && request.resource.data.status == 'active'
+        && request.resource.data.acknowledgedAt == null
+        && request.resource.data.acknowledgedById == null
+        && request.resource.data.resolvedAt == null;
+
+      allow read: if signedIn() && (
+        resource.data.elderUserId == request.auth.uid
+        || isLinkedChild(resource.data.elderUserId)
+      );
+
+      allow update: if signedIn() && (
+        (
+          isLinkedChild(resource.data.elderUserId)
+          && resource.data.status == 'active'
+          && request.resource.data.status == 'acknowledged'
+          && request.resource.data.acknowledgedAt is timestamp
+          && request.resource.data.acknowledgedById == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'acknowledgedAt', 'acknowledgedById'])
+        )
+        ||
+        (
+          resource.data.elderUserId == request.auth.uid
+          && resource.data.status in ['active', 'acknowledged']
+          && request.resource.data.status in ['cancelled', 'resolved']
+          && request.resource.data.resolvedAt is timestamp
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'resolvedAt'])
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /voice_reminders/{reminderId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.storagePath is string
+        && request.resource.data.durationSeconds is int
+        && request.resource.data.durationSeconds > 0
+        && request.resource.data.durationSeconds <= 300;
+      allow read: if signedIn()
+        && resource.data.ownerId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
