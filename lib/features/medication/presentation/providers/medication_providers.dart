@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../authentication/presentation/providers/auth_providers.dart';
 import '../../data/repositories/medication_repository_impl.dart';
 import '../../domain/entities/medication_intake.dart';
+import '../../domain/entities/medication_history_entry.dart';
 import '../../domain/entities/pill_schedule.dart';
 import '../../domain/repositories/medication_repository.dart';
 
@@ -37,3 +38,20 @@ final todayMedicationIntakesForElderProvider =
           .watch(medicationRepositoryProvider)
           .watchIntakes(elderId: elderId, day: DateTime.now());
     });
+
+final medicationHistoryProvider =
+    StreamProvider.family<List<MedicationHistoryEntry>, String>((ref, elderId) {
+      return ref.watch(medicationRepositoryProvider).watchHistory(elderId);
+    });
+
+final medicationHistorySyncProvider = FutureProvider.family<void, String>((
+  ref,
+  elderId,
+) async {
+  final schedules = await ref.watch(
+    medicationSchedulesForElderProvider(elderId).future,
+  );
+  await ref
+      .read(medicationRepositoryProvider)
+      .syncMissedDoses(elderId: elderId, schedules: schedules, now: DateTime.now());
+});
