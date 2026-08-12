@@ -7,13 +7,14 @@ import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../domain/entities/pill_schedule.dart';
+import '../../../voice_reminder/data/services/local_notification_sound_service.dart';
 
 final class MedicationNotificationService {
   MedicationNotificationService._();
 
   static final instance = MedicationNotificationService._();
 
-  static const _channelId = 'medication_reminders';
+  static const _defaultChannelId = 'medication_reminders';
   static const _payloadPrefix = 'medication:';
   static const _horizonDays = 30;
 
@@ -25,6 +26,8 @@ final class MedicationNotificationService {
   bool _permissionRequested = false;
   bool _pendingOpen = false;
   String? _lastFingerprint;
+  String? _lastElderId;
+  List<PillSchedule> _lastSchedules = const [];
 
   Stream<String> get reminderOpened => _openedController.stream;
 
@@ -88,8 +91,12 @@ final class MedicationNotificationService {
     if (kIsWeb) return;
     await initialize();
     await _requestPermission();
-    final fingerprint = _fingerprint(elderId, schedules);
+    final soundUri = await LocalNotificationSoundService.instance
+        .getSelectedSoundUri();
+    final fingerprint = '${_fingerprint(elderId, schedules)}|$soundUri';
     if (_lastFingerprint == fingerprint) return;
+    _lastElderId = elderId;
+    _lastSchedules = List.unmodifiable(schedules);
 
     final pending = await _notifications.pendingNotificationRequests();
     for (final notification in pending) {
@@ -118,20 +125,26 @@ final class MedicationNotificationService {
             minuteOfDay % 60,
           );
           if (!scheduledDate.isAfter(now)) continue;
+          final channelId = soundUri == null
+              ? _defaultChannelId
+              : 'medication_voice_${_stableHash(soundUri)}';
           await _notifications.zonedSchedule(
             id: _notificationId(schedule.id, scheduledDate, minuteOfDay),
             title: 'Đã đến giờ uống thuốc',
             body:
                 '${schedule.dosage} ${schedule.medicationName}. ${schedule.instruction}',
             scheduledDate: scheduledDate,
-            notificationDetails: const NotificationDetails(
+            notificationDetails: NotificationDetails(
               android: AndroidNotificationDetails(
-                _channelId,
+                channelId,
                 'Nhắc uống thuốc',
                 channelDescription: 'Thông báo khi đến giờ uống thuốc',
                 importance: Importance.max,
                 priority: Priority.high,
                 playSound: true,
+                sound: soundUri == null
+                    ? null
+                    : UriAndroidNotificationSound(soundUri),
                 enableVibration: true,
                 category: AndroidNotificationCategory.reminder,
               ),
@@ -148,6 +161,13 @@ final class MedicationNotificationService {
       }
     }
     _lastFingerprint = fingerprint;
+  }
+
+  Future<void> rescheduleWithSelectedSound() async {
+    final elderId = _lastElderId;
+    if (elderId == null) return;
+    _lastFingerprint = null;
+    await syncSchedules(elderId, _lastSchedules);
   }
 
   bool _isScheduleActiveOn(PillSchedule schedule, DateTime day) {
@@ -172,6 +192,15 @@ final class MedicationNotificationService {
   int _notificationId(String scheduleId, DateTime day, int minuteOfDay) {
     var hash = 0x811c9dc5;
     final value = '$scheduleId:${day.year}-${day.month}-${day.day}:$minuteOfDay';
+    for (final unit in value.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0x7fffffff;
+    }
+    return hash;
+  }
+
+  int _stableHash(String value) {
+    var hash = 0x811c9dc5;
     for (final unit in value.codeUnits) {
       hash ^= unit;
       hash = (hash * 0x01000193) & 0x7fffffff;
