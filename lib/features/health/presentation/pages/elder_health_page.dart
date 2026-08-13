@@ -4,10 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../domain/entities/health_record.dart';
 import '../providers/health_providers.dart';
-import 'record_blood_pressure_page.dart';
+import 'elder_record_blood_pressure_page.dart';
 
-class HealthPage extends ConsumerWidget {
-  const HealthPage({super.key});
+class ElderHealthPage extends ConsumerWidget {
+  const ElderHealthPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -51,7 +51,7 @@ class _HealthContent extends ConsumerWidget {
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute<void>(
-                    builder: (_) => const RecordBloodPressurePage(),
+                    builder: (_) => const ElderRecordBloodPressurePage(),
                   ),
                 ),
                 icon: const Icon(Icons.add),
@@ -222,30 +222,39 @@ class _BloodPressureChartPainter extends CustomPainter {
       size,
       records.map((record) => record.systolic).toList(),
       const Color(0xFFF04444),
+      labelAbove: true,
     );
     _drawSeries(
       canvas,
       size,
       records.map((record) => record.diastolic).toList(),
       AppColors.primaryBright,
+      labelAbove: false,
     );
   }
 
-  void _drawSeries(Canvas canvas, Size size, List<int> values, Color color) {
+  void _drawSeries(
+    Canvas canvas,
+    Size size,
+    List<int> values,
+    Color color, {
+    required bool labelAbove,
+  }) {
     if (values.isEmpty) return;
     final path = Path();
+    final points = <Offset>[];
     for (var i = 0; i < values.length; i++) {
       final x = values.length == 1
           ? size.width / 2
           : size.width * i / (values.length - 1);
       final normalized = ((values[i] - 40) / 180).clamp(0.0, 1.0);
       final point = Offset(x, size.height - normalized * size.height);
+      points.add(point);
       if (i == 0) {
         path.moveTo(point.dx, point.dy);
       } else {
         path.lineTo(point.dx, point.dy);
       }
-      canvas.drawCircle(point, 5.5, Paint()..color = color);
     }
     if (values.length > 1) {
       canvas.drawPath(
@@ -257,6 +266,58 @@ class _BloodPressureChartPainter extends CustomPainter {
           ..strokeCap = StrokeCap.round,
       );
     }
+    for (var i = 0; i < points.length; i++) {
+      canvas.drawCircle(points[i], 5.5, Paint()..color = color);
+      _drawValueLabel(
+        canvas,
+        size,
+        points[i],
+        values[i],
+        color,
+        labelAbove,
+      );
+    }
+  }
+
+  void _drawValueLabel(
+    Canvas canvas,
+    Size size,
+    Offset point,
+    int value,
+    Color color,
+    bool labelAbove,
+  ) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: '$value',
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    const padding = EdgeInsets.symmetric(horizontal: 5, vertical: 2);
+    final labelSize = Size(
+      textPainter.width + padding.horizontal,
+      textPainter.height + padding.vertical,
+    );
+    var left = point.dx - labelSize.width / 2;
+    left = left.clamp(0.0, size.width - labelSize.width).toDouble();
+    var top = labelAbove
+        ? point.dy - labelSize.height - 8
+        : point.dy + 8;
+    top = top.clamp(0.0, size.height - labelSize.height).toDouble();
+    final rect = Rect.fromLTWH(left, top, labelSize.width, labelSize.height);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+      Paint()..color = Colors.white.withValues(alpha: 0.92),
+    );
+    textPainter.paint(
+      canvas,
+      Offset(left + padding.left, top + padding.top),
+    );
   }
 
   @override
