@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
@@ -9,6 +10,8 @@ import 'package:record/record.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../core/widgets/app_brand.dart';
 import '../../../authentication/presentation/providers/auth_providers.dart';
+import '../../../medication/data/services/medication_notification_service.dart';
+import '../../data/services/local_notification_sound_service.dart';
 import '../providers/voice_reminder_providers.dart';
 
 class VoiceRecorderPage extends ConsumerStatefulWidget {
@@ -30,6 +33,11 @@ class _VoiceRecorderPageState extends ConsumerState<VoiceRecorderPage> {
   bool recording = false;
   bool uploading = false;
   bool playing = false;
+  bool useAsNotificationSound = true;
+  int recordingSampleRate = 44100;
+
+  bool get supportsLocalRecordedSound =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   @override
   void initState() {
@@ -52,9 +60,15 @@ class _VoiceRecorderPageState extends ConsumerState<VoiceRecorderPage> {
       chunks.clear();
       recordedBytes = null;
       duration = Duration.zero;
+      recordingSampleRate = 44100;
+      await recorder.setOnConfigChanged((config) {
+        recordingSampleRate = config.sampleRate;
+      });
       final stream = await recorder.startStream(
         const RecordConfig(
-          encoder: AudioEncoder.wav,
+          // Streaming WAV is not supported consistently on Android or web.
+          // PCM is wrapped in a WAV header after the recording stops.
+          encoder: AudioEncoder.pcm16bits,
           sampleRate: 44100,
           numChannels: 1,
         ),
@@ -63,7 +77,7 @@ class _VoiceRecorderPageState extends ConsumerState<VoiceRecorderPage> {
       timer?.cancel();
       timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
-        if (duration.inSeconds >= 299) {
+        if (duration.inSeconds >= 29) {
           stopRecording();
         } else {
           setState(() => duration += const Duration(seconds: 1));
@@ -82,12 +96,16 @@ class _VoiceRecorderPageState extends ConsumerState<VoiceRecorderPage> {
       await recorder.stop();
       await audioSubscription?.cancel();
       final length = chunks.fold<int>(0, (sum, chunk) => sum + chunk.length);
-      final bytes = Uint8List(length);
+      final rawBytes = Uint8List(length);
       var offset = 0;
       for (final chunk in chunks) {
-        bytes.setRange(offset, offset + chunk.length, chunk);
+        rawBytes.setRange(offset, offset + chunk.length, chunk);
         offset += chunk.length;
       }
+      final bytes = _pcm16ToWav(
+        rawBytes,
+        sampleRate: recordingSampleRate,
+      );
       setState(() {
         recording = false;
         recordedBytes = bytes.isEmpty ? null : bytes;
@@ -114,7 +132,25 @@ class _VoiceRecorderPageState extends ConsumerState<VoiceRecorderPage> {
     final userId = ref.read(authRepositoryProvider).currentUserId;
     if (bytes == null || userId == null || duration.inSeconds == 0) return;
     setState(() => uploading = true);
+    var localSoundSaved = false;
+    Object? localSoundError;
     try {
+      // The local reminder must not depend on Firebase Storage availability.
+      if (useAsNotificationSound && supportsLocalRecordedSound) {
+        try {
+          await LocalNotificationSoundService.instance.saveAndSelect(
+            audioBytes: bytes,
+            title: titleController.text.trim().isEmpty
+                ? 'Lời nhắc uống thuốc'
+                : titleController.text.trim(),
+          );
+          await MedicationNotificationService.instance
+              .rescheduleWithSelectedSound();
+          localSoundSaved = true;
+        } catch (error) {
+          localSoundError = error;
+        }
+      }
       await ref
           .read(voiceReminderRepositoryProvider)
           .upload(
@@ -125,13 +161,25 @@ class _VoiceRecorderPageState extends ConsumerState<VoiceRecorderPage> {
             audioBytes: bytes,
             durationSeconds: duration.inSeconds,
           );
+      final successMessage = localSoundSaved
+          ? 'Đã lưu Firebase và đặt bản ghi làm âm báo nhắc thuốc.'
+          : localSoundError != null
+          ? 'Đã lưu lên Firebase nhưng chưa đặt được âm báo: $localSoundError'
+          : 'Đã lưu bản ghi âm lên Firebase.';
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã lưu bản ghi âm lên Firebase.')),
+        SnackBar(content: Text(successMessage)),
       );
       Navigator.pop(context);
     } catch (error) {
-      if (mounted) _showError('Không thể tải bản ghi lên Firebase', error);
+      if (mounted) {
+        _showError(
+          localSoundSaved
+              ? 'Đã đặt âm báo trên thiết bị nhưng không thể tải lên Firebase'
+              : 'Không thể lưu bản ghi',
+          error,
+        );
+      }
     } finally {
       if (mounted) setState(() => uploading = false);
     }
@@ -250,6 +298,21 @@ class _VoiceRecorderPageState extends ConsumerState<VoiceRecorderPage> {
               label: Text(playing ? 'Dừng phát' : 'Nghe lại'),
             ),
             const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: supportsLocalRecordedSound && useAsNotificationSound,
+              onChanged: uploading || !supportsLocalRecordedSound
+                  ? null
+                  : (value) => setState(() => useAsNotificationSound = value),
+              title: const Text('Dùng làm âm báo nhắc thuốc'),
+              subtitle: Text(
+                supportsLocalRecordedSound
+                    ? 'Lưu trên thiết bị và áp dụng cho các lịch nhắc sắp tới.'
+                    : 'Tính năng này hiện được hỗ trợ trên điện thoại Android.',
+              ),
+              secondary: const Icon(Icons.notifications_active_rounded),
+            ),
+            const SizedBox(height: 14),
             FilledButton.icon(
               onPressed: uploading ? null : upload,
               icon: uploading
@@ -285,4 +348,38 @@ String _formatDuration(Duration duration) {
   final minutes = duration.inMinutes.toString().padLeft(2, '0');
   final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
   return '$minutes:$seconds';
+}
+
+Uint8List _pcm16ToWav(
+  Uint8List pcmBytes, {
+  required int sampleRate,
+  int channels = 1,
+}) {
+  const bitsPerSample = 16;
+  final byteRate = sampleRate * channels * bitsPerSample ~/ 8;
+  final blockAlign = channels * bitsPerSample ~/ 8;
+  final result = Uint8List(44 + pcmBytes.length);
+  final data = ByteData.sublistView(result);
+
+  void writeText(int offset, String value) {
+    for (var index = 0; index < value.length; index++) {
+      result[offset + index] = value.codeUnitAt(index);
+    }
+  }
+
+  writeText(0, 'RIFF');
+  data.setUint32(4, 36 + pcmBytes.length, Endian.little);
+  writeText(8, 'WAVE');
+  writeText(12, 'fmt ');
+  data.setUint32(16, 16, Endian.little);
+  data.setUint16(20, 1, Endian.little);
+  data.setUint16(22, channels, Endian.little);
+  data.setUint32(24, sampleRate, Endian.little);
+  data.setUint32(28, byteRate, Endian.little);
+  data.setUint16(32, blockAlign, Endian.little);
+  data.setUint16(34, bitsPerSample, Endian.little);
+  writeText(36, 'data');
+  data.setUint32(40, pcmBytes.length, Endian.little);
+  result.setRange(44, result.length, pcmBytes);
+  return result;
 }

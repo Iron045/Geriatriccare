@@ -7,8 +7,7 @@ abstract interface class AccountLinkRepository {
   Future<void> respondToRequest({
     required String requestId,
     required bool accept,
-    required String childId,
-    required String childName,
+    required String elderId,
   });
   Future<void> cancelRequest(String requestId);
 }

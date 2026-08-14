@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../child/presentation/pages/child_shell_page.dart';
-import '../../../elder/presentation/pages/elder_shell_page.dart';
+import '../../../navigation/presentation/pages/child_navigation_page.dart';
+import '../../../navigation/presentation/pages/elder_navigation_page.dart';
 import '../../../medication/presentation/widgets/medication_notification_sync.dart';
 import '../../domain/entities/app_user.dart';
 import '../providers/auth_providers.dart';
@@ -28,10 +28,10 @@ class AuthGate extends ConsumerWidget {
             if (user.role == UserRole.elder) {
               return MedicationNotificationSync(
                 elderId: user.id,
-                child: ElderShellPage(userId: user.id),
+                child: ElderNavigationPage(userId: user.id),
               );
             }
-            return ChildShellPage(user: user);
+            return ChildNavigationPage(user: user);
           },
         );
       },

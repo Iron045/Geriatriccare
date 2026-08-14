@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geriatriccare/app/app.dart';
-import 'package:geriatriccare/features/elder/presentation/pages/elder_shell_page.dart';
+import 'package:geriatriccare/features/navigation/presentation/pages/elder_navigation_page.dart';
 import 'package:geriatriccare/features/health/presentation/providers/health_providers.dart';
 import 'package:geriatriccare/features/medication/presentation/providers/medication_providers.dart';
 
@@ -20,7 +20,7 @@ void main() {
           ),
           healthRecordsProvider.overrideWith((ref) => Stream.value(const [])),
         ],
-        child: const GeriatricCareApp(home: ElderShellPage()),
+        child: const GeriatricCareApp(home: ElderNavigationPage()),
       ),
     );
     expect(find.text('GỌI KHẨN\nCẤP'), findsOneWidget);
