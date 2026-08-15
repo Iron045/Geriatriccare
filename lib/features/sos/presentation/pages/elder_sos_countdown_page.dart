@@ -6,16 +6,18 @@ import '../../data/services/sos_location_service.dart';
 import '../../domain/entities/sos_alert.dart';
 import '../providers/sos_providers.dart';
 
-class SosCountdownPage extends ConsumerStatefulWidget {
-  const SosCountdownPage({super.key, required this.elderId});
+class ElderSosCountdownPage extends ConsumerStatefulWidget {
+  const ElderSosCountdownPage({super.key, required this.elderId});
 
   final String elderId;
 
   @override
-  ConsumerState<SosCountdownPage> createState() => _SosCountdownPageState();
+  ConsumerState<ElderSosCountdownPage> createState() =>
+      _ElderSosCountdownPageState();
 }
 
-class _SosCountdownPageState extends ConsumerState<SosCountdownPage> {
+class _ElderSosCountdownPageState
+    extends ConsumerState<ElderSosCountdownPage> {
   String? alertId;
   bool sending = false;
   bool closing = false;
@@ -140,7 +142,7 @@ class _SosCountdownPageState extends ConsumerState<SosCountdownPage> {
                   acknowledged
                       ? 'Người thân đã xác nhận và đang liên hệ với bạn.'
                       : sent
-                      ? 'Cảnh báo đã được gửi đến tài khoản Child liên kết.'
+                      ? 'Cảnh báo đã được gửi đến tài khoản con cái đã liên kết.'
                       : locating
                       ? 'Đang xác định vị trí của bạn...'
                       : 'Đang chuẩn bị gửi cảnh báo.',
