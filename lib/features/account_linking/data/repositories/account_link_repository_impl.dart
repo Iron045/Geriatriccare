@@ -34,7 +34,7 @@ final class AccountLinkRepositoryImpl implements AccountLinkRepository {
   Future<void> createRequest(AccountLinkRequest request) async {
     final directory = await _firestore
         .collection('user_directory')
-        .doc(request.childPhone)
+        .doc(request.elderPhone)
         .get();
     final target = directory.data();
     if (target == null) {
@@ -42,18 +42,34 @@ final class AccountLinkRepositoryImpl implements AccountLinkRepository {
         'Không tìm thấy tài khoản với số điện thoại này. Người nhận cần đăng nhập lại để đồng bộ hồ sơ.',
       );
     }
-    if (target['role'] != 'child') {
+    if (target['role'] != 'elder') {
       throw const ValidationException(
-        'Chỉ có thể liên kết tài khoản Elder với tài khoản Child.',
+        'Tài khoản con cái chỉ có thể gửi liên kết cho người cao tuổi.',
       );
     }
-    final childId = target['uid'] as String?;
-    if (childId == null || childId.isEmpty || childId == request.elderId) {
+    final elderId = target['uid'] as String?;
+    if (elderId == null || elderId.isEmpty || elderId == request.childId) {
       throw const ValidationException('Tài khoản liên kết không hợp lệ.');
+    }
+    final existingLinks = await _links
+        .where('childPhone', isEqualTo: request.childPhone)
+        .get();
+    final duplicate = existingLinks.docs.any((document) {
+      final data = document.data();
+      return data['elderId'] == elderId &&
+          (data['status'] == LinkRequestStatus.pending.name ||
+              data['status'] == LinkRequestStatus.accepted.name);
+    });
+    if (duplicate) {
+      throw const ValidationException(
+        'Tài khoản này đã liên kết hoặc đang chờ xác nhận.',
+      );
     }
     final document = request.id.isEmpty ? _links.doc() : _links.doc(request.id);
     final data = AccountLinkModel.toFirestore(request);
-    data['childId'] = childId;
+    data['elderId'] = elderId;
+    data['elderName'] = target['fullName'] as String? ?? 'Người cao tuổi';
+    data['elderGender'] = target['gender'] as String?;
     await document.set(data);
   }
 
@@ -61,8 +77,7 @@ final class AccountLinkRepositoryImpl implements AccountLinkRepository {
   Future<void> respondToRequest({
     required String requestId,
     required bool accept,
-    required String childId,
-    required String childName,
+    required String elderId,
   }) async {
     final linkReference = _links.doc(requestId);
     await _firestore.runTransaction((transaction) async {
@@ -71,19 +86,19 @@ final class AccountLinkRepositoryImpl implements AccountLinkRepository {
       if (data == null || data['status'] != LinkRequestStatus.pending.name) {
         throw StateError('Yêu cầu liên kết không còn hiệu lực');
       }
-      final invitedChildId = data['childId'] as String?;
-      if (invitedChildId != null && invitedChildId != childId) {
+      if (data['elderId'] != elderId) {
         throw const ValidationException(
-          'Yêu cầu này được gửi cho một tài khoản Child khác.',
+          'Yêu cầu này được gửi cho một tài khoản người cao tuổi khác.',
         );
       }
-      final elderId = data['elderId'] as String;
+      final childId = data['childId'] as String?;
+      if (childId == null || childId.isEmpty) {
+        throw const ValidationException('Tài khoản con cái không hợp lệ.');
+      }
       transaction.update(linkReference, {
         'status': accept
             ? LinkRequestStatus.accepted.name
             : LinkRequestStatus.rejected.name,
-        'childId': childId,
-        'childName': childName,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       if (accept) {
