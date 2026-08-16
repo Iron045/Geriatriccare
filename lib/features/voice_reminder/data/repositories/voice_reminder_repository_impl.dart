@@ -22,11 +22,19 @@ final class VoiceReminderRepositoryImpl implements VoiceReminderRepository {
     final document = _firestore.collection('voice_reminders').doc();
     final storagePath = 'voice_reminders/$ownerId/${document.id}.wav';
     final reference = _storage.ref(storagePath);
-    await reference.putData(
+    final snapshot = await reference.putData(
       audioBytes,
       SettableMetadata(contentType: 'audio/wav'),
     );
-    final downloadUrl = await reference.getDownloadURL();
+    String? downloadUrl;
+    Object? downloadUrlError;
+    try {
+      downloadUrl = await _getDownloadUrlWithRetry(snapshot.ref);
+    } catch (error) {
+      // storagePath is sufficient to retrieve the file later. A temporary
+      // getDownloadURL failure must not prevent Firestore metadata creation.
+      downloadUrlError = error;
+    }
     final now = DateTime.now();
     try {
       await document.set({
@@ -34,6 +42,9 @@ final class VoiceReminderRepositoryImpl implements VoiceReminderRepository {
         'title': title,
         'storagePath': storagePath,
         'downloadUrl': downloadUrl,
+        'uploadStatus': downloadUrl == null ? 'stored' : 'ready',
+        if (downloadUrlError != null)
+          'downloadUrlError': downloadUrlError.toString(),
         'durationSeconds': durationSeconds,
         'createdAt': Timestamp.fromDate(now),
       });
@@ -46,9 +57,23 @@ final class VoiceReminderRepositoryImpl implements VoiceReminderRepository {
       ownerId: ownerId,
       title: title,
       storagePath: storagePath,
-      downloadUrl: downloadUrl,
+      downloadUrl: downloadUrl ?? '',
       durationSeconds: durationSeconds,
       createdAt: now,
     );
+  }
+
+  Future<String> _getDownloadUrlWithRetry(Reference reference) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 4; attempt++) {
+      try {
+        return await reference.getDownloadURL();
+      } on FirebaseException catch (error) {
+        lastError = error;
+        if (error.code != 'object-not-found' || attempt == 3) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
+      }
+    }
+    throw StateError('Không thể lấy URL bản ghi: $lastError');
   }
 }
