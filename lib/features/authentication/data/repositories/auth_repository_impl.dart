@@ -35,7 +35,7 @@ final class AuthRepositoryImpl implements AuthRepository {
     }
     if (defaultTargetPlatform != TargetPlatform.android) {
       throw const ValidationException(
-        'Đăng nhập OTP hiện được hỗ trợ trên Android và Web.',
+        'Đăng nhập bằng mã OTP hiện được hỗ trợ trên Android và trình duyệt web.',
       );
     }
     final completer = Completer<String>();
@@ -49,7 +49,10 @@ final class AuthRepositoryImpl implements AuthRepository {
       verificationFailed: (error) {
         if (!completer.isCompleted) {
           completer.completeError(
-            NetworkException(error.message ?? 'Không thể gửi mã OTP', error),
+            NetworkException(
+              _firebaseAuthMessage(error, 'Không thể gửi mã OTP'),
+              error,
+            ),
           );
         }
       },
@@ -63,7 +66,7 @@ final class AuthRepositoryImpl implements AuthRepository {
     return completer.future.timeout(
       const Duration(seconds: 75),
       onTimeout: () => throw const NetworkException(
-        'Firebase không phản hồi yêu cầu OTP. Hãy kiểm tra kết nối mạng, Phone Auth, SHA-1/SHA-256 và google-services.json.',
+        'Firebase không phản hồi yêu cầu OTP. Hãy kiểm tra kết nối mạng, xác thực số điện thoại, SHA-1/SHA-256 và tệp google-services.json.',
       ),
     );
   }
@@ -75,7 +78,10 @@ final class AuthRepositoryImpl implements AuthRepository {
       return 'web_confirmation';
     } on FirebaseAuthException catch (error) {
       throw NetworkException(
-        error.message ?? 'Không thể gửi mã OTP trên Web',
+        _firebaseAuthMessage(
+          error,
+          'Không thể gửi mã OTP trên trình duyệt web',
+        ),
         error,
       );
     }
@@ -92,7 +98,7 @@ final class AuthRepositoryImpl implements AuthRepository {
         if (confirmationResult == null ||
             verificationId != 'web_confirmation') {
           throw const ValidationException(
-            'Phiên xác thực Web đã hết hạn. Vui lòng gửi lại mã OTP.',
+            'Phiên xác thực trên trình duyệt đã hết hạn. Vui lòng gửi lại mã OTP.',
           );
         }
         await confirmationResult.confirm(smsCode);
@@ -105,7 +111,10 @@ final class AuthRepositoryImpl implements AuthRepository {
       );
       await _auth.signInWithCredential(credential);
     } on FirebaseAuthException catch (error) {
-      throw ValidationException(error.message ?? 'Mã OTP không hợp lệ', error);
+      throw ValidationException(
+        _firebaseAuthMessage(error, 'Mã OTP không hợp lệ'),
+        error,
+      );
     }
   }
 
@@ -123,6 +132,8 @@ final class AuthRepositoryImpl implements AuthRepository {
             'uid': profile.id,
             'phoneNumber': profile.phoneNumber,
             'role': profile.role.name,
+            'fullName': profile.fullName,
+            'gender': profile.gender?.name,
             'updatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
     }
@@ -146,6 +157,8 @@ final class AuthRepositoryImpl implements AuthRepository {
         'uid': user.id,
         'phoneNumber': user.phoneNumber,
         'role': user.role.name,
+        'fullName': user.fullName,
+        'gender': user.gender?.name,
         'updatedAt': FieldValue.serverTimestamp(),
       },
       SetOptions(merge: true),
@@ -156,3 +169,21 @@ final class AuthRepositoryImpl implements AuthRepository {
   @override
   Future<void> signOut() => _auth.signOut();
 }
+
+String _firebaseAuthMessage(FirebaseAuthException error, String fallback) =>
+    switch (error.code) {
+      'invalid-phone-number' => 'Số điện thoại không hợp lệ.',
+      'invalid-verification-code' => 'Mã OTP không chính xác.',
+      'session-expired' => 'Mã OTP đã hết hạn. Vui lòng gửi lại mã mới.',
+      'too-many-requests' =>
+        'Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.',
+      'network-request-failed' =>
+        'Không thể kết nối mạng. Vui lòng kiểm tra Internet.',
+      'quota-exceeded' => 'Dự án đã vượt hạn mức gửi mã OTP.',
+      'captcha-check-failed' =>
+        'Xác minh chống người máy không thành công. Vui lòng thử lại.',
+      'web-context-cancelled' => 'Bạn đã hủy cửa sổ xác minh.',
+      'web-context-already-presented' =>
+        'Cửa sổ xác minh đang được hiển thị.',
+      _ => fallback,
+    };

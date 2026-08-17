@@ -22,7 +22,7 @@ class AppBrand extends StatelessWidget {
         ),
         const SizedBox(width: 12),
         Text(
-          'Geriatric Care',
+          'GeriatricCare',
           style: TextStyle(
             color: AppColors.primary,
             fontSize: compact ? 28 : 36,
