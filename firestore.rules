@@ -98,9 +98,12 @@ service cloud.firestore {
         || isLinkedChild(resource.data.elderUserId)
       );
       allow update: if signedIn()
-        && resource.data.elderUserId == request.auth.uid
-        && request.resource.data.elderUserId == resource.data.elderUserId;
-      allow delete: if false;
+        && request.resource.data.elderUserId == resource.data.elderUserId
+        && resource.data.elderUserId == request.auth.uid;
+      allow delete: if signedIn() && (
+        resource.data.elderUserId == request.auth.uid
+        || isLinkedChild(resource.data.elderUserId)
+        );
     }
 
     match /medication_intakes/{intakeId} {
@@ -118,16 +121,16 @@ service cloud.firestore {
 
     match /account_links/{linkId} {
       allow create: if signedIn()
-        && request.resource.data.elderId == request.auth.uid
-        && hasRole(request.auth.uid, 'elder')
-        && request.resource.data.childPhone is string
-        && request.resource.data.childPhone != myPhone()
+        && hasRole(request.auth.uid, 'child')
+        && request.resource.data.childId == request.auth.uid
+        && request.resource.data.childPhone == myPhone()
+        && request.resource.data.elderPhone is string
+        && request.resource.data.elderPhone != myPhone()
         && request.resource.data.status == 'pending'
-        && request.resource.data.childId is string
-        && get(/databases/$(database)/documents/user_directory/$(request.resource.data.childPhone)).data.uid
-          == request.resource.data.childId
-        && get(/databases/$(database)/documents/user_directory/$(request.resource.data.childPhone)).data.role
-          == 'child';
+        && get(/databases/$(database)/documents/user_directory/$(request.resource.data.elderPhone)).data.uid
+          == request.resource.data.elderId
+        && get(/databases/$(database)/documents/user_directory/$(request.resource.data.elderPhone)).data.role
+          == 'elder';
 
       allow read: if signedIn() && (
         resource.data.elderId == request.auth.uid
@@ -138,21 +141,20 @@ service cloud.firestore {
       allow update: if signedIn() && (
         (
           resource.data.elderId == request.auth.uid
+          && hasRole(request.auth.uid, 'elder')
           && resource.data.status == 'pending'
-          && request.resource.data.status == 'cancelled'
+          && request.resource.data.status in ['accepted', 'rejected']
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['status', 'updatedAt'])
         )
         ||
         (
-          resource.data.childPhone == myPhone()
+          resource.data.childId == request.auth.uid
           && hasRole(request.auth.uid, 'child')
-          && (resource.data.childId == null || resource.data.childId == request.auth.uid)
           && resource.data.status == 'pending'
-          && request.resource.data.status in ['accepted', 'rejected']
-          && request.resource.data.childId == request.auth.uid
+          && request.resource.data.status == 'cancelled'
           && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status', 'childId', 'childName', 'updatedAt'])
+            .hasOnly(['status', 'updatedAt'])
         )
       );
       allow delete: if false;
@@ -160,13 +162,16 @@ service cloud.firestore {
 
     match /care_relationships/{relationshipId} {
       allow create: if signedIn()
-        && request.resource.data.childId == request.auth.uid
+        && request.resource.data.elderId == request.auth.uid
+        && hasRole(request.auth.uid, 'elder')
         && request.resource.data.status == 'accepted'
-        && relationshipId == request.resource.data.elderId + '_' + request.auth.uid
-        && get(/databases/$(database)/documents/account_links/$(request.resource.data.invitationId)).data.elderId
-          == request.resource.data.elderId
-        && get(/databases/$(database)/documents/account_links/$(request.resource.data.invitationId)).data.childPhone
-          == myPhone();
+        && relationshipId == request.auth.uid + '_' + request.resource.data.childId
+        && getAfter(/databases/$(database)/documents/account_links/$(request.resource.data.invitationId)).data.elderId
+          == request.auth.uid
+        && getAfter(/databases/$(database)/documents/account_links/$(request.resource.data.invitationId)).data.childId
+          == request.resource.data.childId
+        && getAfter(/databases/$(database)/documents/account_links/$(request.resource.data.invitationId)).data.status
+          == 'accepted';
       allow read: if signedIn() && (
         resource.data.elderId == request.auth.uid
         || resource.data.childId == request.auth.uid
@@ -209,6 +214,45 @@ service cloud.firestore {
             .hasOnly(['status', 'resolvedAt'])
         )
       );
+      allow delete: if false;
+    }
+
+    match /elder_locations/{elderId} {
+      allow create, update: if ownsUser(elderId)
+        && hasRole(elderId, 'elder')
+        && request.resource.data.elderId == elderId
+        && request.resource.data.latitude is number
+        && request.resource.data.longitude is number
+        && request.resource.data.accuracyMeters is number;
+      allow read: if ownsUser(elderId) || isLinkedChild(elderId);
+      allow delete: if false;
+    }
+
+    match /medication_history/{historyId} {
+      allow create: if signedIn()
+        && (
+          request.resource.data.elderUserId == request.auth.uid
+          || isLinkedChild(request.resource.data.elderUserId)
+        )
+        && request.resource.data.status in ['taken', 'missed']
+        && (
+          request.resource.data.status == 'missed'
+          || request.resource.data.elderUserId == request.auth.uid
+        )
+        && request.resource.data.medicationName is string
+        && request.resource.data.dosage is string
+        && request.resource.data.scheduledAt is timestamp;
+      allow read: if signedIn() && (
+        resource.data.elderUserId == request.auth.uid
+        || isLinkedChild(resource.data.elderUserId)
+      );
+      allow update: if signedIn()
+        && resource.data.elderUserId == request.auth.uid
+        && request.resource.data.elderUserId == resource.data.elderUserId
+        && resource.data.status == 'missed'
+        && request.resource.data.status == 'taken'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'takenAt', 'createdAt', 'medicationName', 'dosage']);
       allow delete: if false;
     }
 

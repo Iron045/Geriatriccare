@@ -12,23 +12,23 @@ class DefaultFirebaseOptions {
         return android;
       case TargetPlatform.iOS:
         throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for ios.',
+          'Cấu hình Firebase chưa được thiết lập cho iOS.',
         );
       case TargetPlatform.macOS:
         throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos.',
+          'Cấu hình Firebase chưa được thiết lập cho macOS.',
         );
       case TargetPlatform.windows:
         throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows.',
+          'Cấu hình Firebase chưa được thiết lập cho Windows.',
         );
       case TargetPlatform.linux:
         throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for linux.',
+          'Cấu hình Firebase chưa được thiết lập cho Linux.',
         );
       default:
         throw UnsupportedError(
-          'DefaultFirebaseOptions are not supported for this platform.',
+          'Nền tảng này chưa được hỗ trợ cấu hình Firebase.',
         );
     }
   }

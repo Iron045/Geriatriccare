@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
-import 'firebase_options.dart';
-import 'features/notifications/data/services/push_notification_service.dart';
 import 'features/medication/data/services/medication_notification_service.dart';
+import 'features/notifications/data/services/push_notification_service.dart';
+import 'firebase_options.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
